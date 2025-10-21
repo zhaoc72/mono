@@ -1,0 +1,57 @@
+# Default configuration for the zero-shot segmentation + depth pipeline
+
+device: cuda
+
+models:
+  detector:
+    hf_model_id: "IDEA-Research/grounding-dino-base"
+    box_threshold: 0.25
+    text_threshold: 0.25
+    max_detections: 25
+    category_prompts:
+      - "person"
+      - "car"
+      - "chair"
+      - "table"
+      - "sofa"
+      - "bed"
+      - "television"
+      - "bicycle"
+      - "object"
+  segmenter:
+    checkpoint: "./checkpoints/sam2.1_hiera_base_plus.pt"
+    model_config: "./configs/sam2.1_hiera_base_plus.yaml"
+    image_size: 1024
+    multimask_output: false
+  depth:
+    hf_model_id: "depth-anything/Depth-Anything-V2-Base-hf"
+    normalize_depth: true
+
+pipeline:
+  mode: image  # or video
+  output_root: "./output"
+  visualization:
+    draw_scores: true
+    draw_labels: true
+    depth_colormap: "plasma"
+  geometry:
+    point_cloud: true
+    max_points: 200000
+
+datasets:
+  intrinsics:
+    default:
+      fx: 575.0
+      fy: 575.0
+      cx: 320.0
+      cy: 240.0
+    kitti:
+      fx: 721.5377
+      fy: 718.856
+      cx: 609.5593
+      cy: 172.854
+    scannet:
+      fx: 577.87
+      fy: 577.87
+      cx: 319.5
+      cy: 239.5
