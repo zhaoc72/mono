@@ -1,6 +1,7 @@
 """Video processing pipeline leveraging SAM 2 streaming."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Dict, Iterable, List
 
@@ -23,6 +24,7 @@ class VideoFrameResult:
     masks: Dict[int, InstanceMask]
     metadata: Dict
     depth_result: DepthResult
+    timings: Dict[str, Dict[str, float]]
 
 
 class VideoProcessor:
@@ -46,18 +48,21 @@ class VideoProcessor:
         frame_results: List[VideoFrameResult] = []
         geometry_cfg = self.config.get("pipeline", {}).get("geometry", {})
 
-        first_frame = None
+        initialized = False
         for idx, frame in enumerate(frames):
-            if first_frame is None:
-                first_frame = frame
+            if not initialized:
                 first_image = Image.fromarray(frame)
                 proposals = self.detector.detect(first_image)
                 prompts = self.detector.generate_sam_prompts(proposals)
                 categories = [proposal.category for proposal in proposals]
                 self.segmenter.initialize_video(frame, prompts, categories=categories)
-                mask_predictions = self.segmenter.segment_video_frame(frame, frame_idx=0)
-            else:
-                mask_predictions = self.segmenter.segment_video_frame(frame, frame_idx=idx)
+                initialized = True
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                seg_future = executor.submit(self._segment_video_frame_task, frame, idx)
+                depth_future = executor.submit(self._depth_task, frame)
+                mask_predictions, seg_time = seg_future.result()
+                depth_result, depth_time = depth_future.result()
 
             instance_map = np.zeros(frame.shape[:2], dtype=np.uint16)
             instances_metadata: Dict[int, Dict] = {}
@@ -77,10 +82,20 @@ class VideoProcessor:
                     "bbox": bbox,
                 }
 
-            depth_result = self.depth_estimator.estimate(Image.fromarray(frame))
             metadata = {
                 "intrinsics": intrinsics,
                 "num_instances": len(mask_predictions),
+                "timings": {
+                    "segmentation": {
+                        "time": float(seg_time),
+                        "fps": float(1.0 / seg_time) if seg_time > 0 else 0.0,
+                        "num_masks": len(mask_predictions),
+                    },
+                    "depth": {
+                        "time": float(depth_time),
+                        "fps": float(1.0 / depth_time) if depth_time > 0 else 0.0,
+                    },
+                },
             }
 
             if geometry_cfg.get("point_cloud", False):
@@ -105,6 +120,23 @@ class VideoProcessor:
                     masks=mask_dict,
                     metadata=metadata,
                     depth_result=depth_result,
+                    timings=metadata["timings"],
                 )
             )
         return frame_results
+
+    def _segment_video_frame_task(self, frame: np.ndarray, frame_idx: int):
+        import time
+
+        start = time.perf_counter()
+        masks = self.segmenter.segment_video_frame(frame, frame_idx=frame_idx)
+        elapsed = time.perf_counter() - start
+        return masks, elapsed
+
+    def _depth_task(self, frame: np.ndarray):
+        import time
+
+        start = time.perf_counter()
+        depth_result = self.depth_estimator.estimate(Image.fromarray(frame))
+        elapsed = time.perf_counter() - start
+        return depth_result, elapsed

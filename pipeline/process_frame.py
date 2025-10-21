@@ -1,6 +1,7 @@
 """Single frame processing pipeline."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Dict
 
@@ -22,6 +23,7 @@ class FrameResult:
     masks: Dict[int, InstanceMask]
     metadata: Dict
     depth_result: DepthResult
+    timings: Dict[str, Dict[str, float]]
 
 
 class FrameProcessor:
@@ -54,10 +56,20 @@ class FrameProcessor:
         scores = [proposal.score for proposal in proposals]
 
         np_image = np.array(image, dtype=np.uint8)
-        mask_list = self.segmenter.segment_image(np_image, prompts, categories=categories, scores=scores)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            seg_future = executor.submit(
+                self._segment_image_task,
+                np_image,
+                prompts,
+                categories,
+                scores,
+            )
+            depth_future = executor.submit(self._depth_task, image)
+            mask_list, seg_time = seg_future.result()
+            depth_result, depth_time = depth_future.result()
+
         mask_dict = {mask.instance_id: mask for mask in mask_list}
 
-        depth_result = self.depth_estimator.estimate(image)
         instance_map = self._build_instance_map(np_image.shape, mask_dict)
 
         instances_metadata = {}
@@ -73,9 +85,22 @@ class FrameProcessor:
                 "bbox": bbox,
             }
 
+        timings = {
+            "segmentation": {
+                "time": float(seg_time),
+                "fps": float(1.0 / seg_time) if seg_time > 0 else 0.0,
+                "num_masks": len(mask_list),
+            },
+            "depth": {
+                "time": float(depth_time),
+                "fps": float(1.0 / depth_time) if depth_time > 0 else 0.0,
+            },
+        }
+
         metadata = {
             "intrinsics": intrinsics,
             "num_instances": len(mask_list),
+            "timings": timings,
         }
 
         geometry_cfg = self.config.get("pipeline", {}).get("geometry", {})
@@ -99,4 +124,27 @@ class FrameProcessor:
             masks=mask_dict,
             metadata=metadata,
             depth_result=depth_result,
+            timings=timings,
         )
+
+    def _segment_image_task(
+        self,
+        image: np.ndarray,
+        prompts,
+        categories,
+        scores,
+    ):
+        import time
+
+        start = time.perf_counter()
+        masks = self.segmenter.segment_image(image, prompts, categories=categories, scores=scores)
+        elapsed = time.perf_counter() - start
+        return masks, elapsed
+
+    def _depth_task(self, image: Image.Image):
+        import time
+
+        start = time.perf_counter()
+        depth_result = self.depth_estimator.estimate(image)
+        elapsed = time.perf_counter() - start
+        return depth_result, elapsed

@@ -3,11 +3,19 @@
 device: cuda
 
 models:
+  dinov3:
+    checkpoint: "/media/pc/D/zhaochen/mono3d/checkpoints/pretrained/dinov3_vitl16_lvd1689m.pth"
+    model_name: "vit_large_patch16_224.dino"
+    image_mean: [0.485, 0.456, 0.406]
+    image_std: [0.229, 0.224, 0.225]
   detector:
     hf_model_id: "IDEA-Research/grounding-dino-base"
     box_threshold: 0.25
     text_threshold: 0.25
     max_detections: 25
+    unsupervised_topk: 8
+    unsupervised_threshold: 0.55
+    unsupervised_box_scale: 3.0
     category_prompts:
       - "person"
       - "car"
@@ -19,12 +27,14 @@ models:
       - "bicycle"
       - "object"
   segmenter:
-    checkpoint: "./checkpoints/sam2.1_hiera_base_plus.pt"
-    model_config: "./configs/sam2.1_hiera_base_plus.yaml"
+    checkpoint: "/media/pc/D/zhaochen/mono3d/checkpoints/pretrained/sam2.1_hiera_large.pt"
+    model_config: "/media/pc/D/zhaochen/mono3d/checkpoints/pretrained/sam2.1_hiera_large.yaml"
     image_size: 1024
     multimask_output: false
   depth:
     hf_model_id: "depth-anything/Depth-Anything-V2-Base-hf"
+    checkpoint: "/media/pc/D/zhaochen/mono3d/checkpoints/pretrained/depth_anything_v2_vitl.pth"
+    encoder: "vitl"
     normalize_depth: true
 
 pipeline:
@@ -55,3 +65,8 @@ datasets:
       fy: 577.87
       cx: 319.5
       cy: 239.5
+    pix3d:
+      fx: 700.0
+      fy: 700.0
+      cx: 320.0
+      cy: 240.0
